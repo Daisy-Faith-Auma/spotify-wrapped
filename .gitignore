@@ -1,0 +1,10 @@
+# Ignore data folder
+data/
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
