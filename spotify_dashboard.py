@@ -22,6 +22,8 @@ dfs = [pd.read_json(f) for f in streaming_files]
 streaming_df = pd.concat(dfs, ignore_index=True)
 streaming_df["ts"] = pd.to_datetime(streaming_df["ts"])
 streaming_df["minutes_played"] = streaming_df["ms_played"] / 60000
+streaming_df['year'] = streaming_df['ts'].dt.year
+streaming_df['month'] = streaming_df['ts'].dt.month_name()
 
 # Playlists
 playlist_files = list(account_path.glob("Playlist*.json"))
@@ -65,63 +67,69 @@ except:
     searches = pd.DataFrame()
 
 # -------------------------
-# 2️⃣ Summary Stats
+# 2️⃣ Year Filter
 # -------------------------
-st.header("Summary")
-st.markdown(f"**Total minutes played:** {streaming_df['minutes_played'].sum():,.0f}")
-st.markdown(f"**Total tracks played:** {streaming_df.shape[0]:,}")
+available_years = streaming_df['year'].dropna().unique()
+selected_year = st.selectbox("Select Year to Filter Dashboard", sorted(available_years, reverse=True))
+df_year = streaming_df[streaming_df['year'] == selected_year].copy()
+
+# -------------------------
+# 3️⃣ Summary Stats
+# -------------------------
+st.header(f"Summary - {selected_year}")
+st.markdown(f"**Total minutes played:** {df_year['minutes_played'].sum():,.0f}")
+st.markdown(f"**Total tracks played:** {df_year.shape[0]:,}")
 st.markdown(f"**Total playlists:** {all_tracks['name'].nunique() if not all_tracks.empty and 'name' in all_tracks.columns else 0}")
 
 # -------------------------
-# 3️⃣ Top Artists / Tracks
+# 4️⃣ Top Artists & Tracks
 # -------------------------
-st.header("Top Artists")
-if "master_metadata_album_artist_name" in streaming_df.columns:
-    top_artists = streaming_df.groupby("master_metadata_album_artist_name")["minutes_played"].sum().sort_values(ascending=False).head(10)
+st.header(f"Top 10 Artists - {selected_year}")
+if "master_metadata_album_artist_name" in df_year.columns:
+    top_artists = (
+        df_year.groupby("master_metadata_album_artist_name")["minutes_played"]
+        .sum().sort_values(ascending=False).head(10)
+    )
     fig = px.bar(top_artists, x=top_artists.values, y=top_artists.index, orientation='h', labels={'x':'Minutes Played','y':'Artist'})
     st.plotly_chart(fig, use_container_width=True)
 
-st.header("Top Tracks")
-if "master_metadata_track_name" in streaming_df.columns:
-    top_tracks = streaming_df.groupby("master_metadata_track_name")["minutes_played"].sum().sort_values(ascending=False).head(10)
+st.header(f"Top 10 Tracks - {selected_year}")
+if "master_metadata_track_name" in df_year.columns:
+    top_tracks = (
+        df_year.groupby("master_metadata_track_name")["minutes_played"]
+        .sum().sort_values(ascending=False).head(10)
+    )
     fig = px.bar(top_tracks, x=top_tracks.values, y=top_tracks.index, orientation='h', labels={'x':'Minutes Played','y':'Track'})
     st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# 4️⃣ Listening Trends
+# 5️⃣ Top Artists per Year
 # -------------------------
-st.header("Listening Trends Over Time")
-if not streaming_df.empty:
-    streaming_df = streaming_df.set_index("ts")
-    daily_minutes = streaming_df["minutes_played"].resample("D").sum()
+st.header("Top 10 Artists Per Year (All Years)")
+top_artists_per_year = (
+    streaming_df.groupby(['year', 'master_metadata_album_artist_name'])
+    .agg(total_minutes=('minutes_played', 'sum'))
+    .reset_index()
+)
+top_artists_per_year['rank'] = (
+    top_artists_per_year.groupby('year')['total_minutes']
+    .rank(method='first', ascending=False)
+)
+top10_artists_per_year = top_artists_per_year[top_artists_per_year['rank'] <= 10]
+st.dataframe(top10_artists_per_year)
+
+# -------------------------
+# 6️⃣ Listening Trends Over Time
+# -------------------------
+st.header(f"Listening Trends Over Time - {selected_year}")
+if not df_year.empty:
+    daily_minutes = df_year.set_index("ts")["minutes_played"].resample("D").sum()
     fig = px.line(daily_minutes, x=daily_minutes.index, y=daily_minutes.values, labels={'x':'Date','y':'Minutes Played'}, title="Daily Listening")
     st.plotly_chart(fig, use_container_width=True)
 
-    monthly_minutes = streaming_df["minutes_played"].resample("M").sum()
+    monthly_minutes = df_year.set_index("ts")["minutes_played"].resample("M").sum()
     fig = px.line(monthly_minutes, x=monthly_minutes.index, y=monthly_minutes.values, labels={'x':'Month','y':'Minutes Played'}, title="Monthly Listening")
     st.plotly_chart(fig, use_container_width=True)
-
-# -------------------------
-# 5️⃣ Podcasts
-# -------------------------
-st.header("Top Podcasts")
-if "episode_show_name" in streaming_df.columns and streaming_df["episode_show_name"].notna().any():
-    top_podcasts = streaming_df.groupby("episode_show_name")["minutes_played"].sum().sort_values(ascending=False).head(10)
-    fig = px.bar(top_podcasts, x=top_podcasts.values, y=top_podcasts.index, orientation='h', labels={'x':'Minutes Played','y':'Podcast'})
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.write("No podcasts found.")
-
-# -------------------------
-# 6️⃣ Audiobooks
-# -------------------------
-st.header("Top Audiobooks")
-if "audiobook_title" in streaming_df.columns and streaming_df["audiobook_title"].notna().any():
-    top_audiobooks = streaming_df.groupby("audiobook_title")["minutes_played"].sum().sort_values(ascending=False).head(10)
-    fig = px.bar(top_audiobooks, x=top_audiobooks.values, y=top_audiobooks.index, orientation='h', labels={'x':'Minutes Played','y':'Audiobook'})
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.write("No audiobooks found.")
 
 # -------------------------
 # 7️⃣ Playlists Insights
@@ -151,15 +159,15 @@ else:
     st.write("No search queries found.")
 
 # -------------------------
-# 9️⃣ Optional Extras
+# 9️⃣ Optional Insights
 # -------------------------
 st.header("Optional Insights")
-if "platform" in streaming_df.columns:
-    platform_minutes = streaming_df.groupby("platform")["minutes_played"].sum()
+if "platform" in df_year.columns:
+    platform_minutes = df_year.groupby("platform")["minutes_played"].sum()
     fig = px.bar(platform_minutes, x=platform_minutes.values, y=platform_minutes.index, orientation='h', labels={'x':'Minutes Played','y':'Platform'})
     st.plotly_chart(fig, use_container_width=True)
 
-if "shuffle" in streaming_df.columns:
-    shuffle_minutes = streaming_df.groupby("shuffle")["minutes_played"].sum()
+if "shuffle" in df_year.columns:
+    shuffle_minutes = df_year.groupby("shuffle")["minutes_played"].sum()
     fig = px.bar(shuffle_minutes, x=shuffle_minutes.values, y=shuffle_minutes.index, orientation='h', labels={'x':'Minutes Played','y':'Shuffle Enabled'})
     st.plotly_chart(fig, use_container_width=True)
